@@ -1,0 +1,217 @@
+---
+title: "Multiple imputation"
+author: "Rianne"
+date: "2026-03-18"
+output: html_document
+---
+#Survival packages 
+```{r}
+library(ggsurvfit)
+library(survival)
+library(survminer)
+library(ggplot2)
+```
+
+#Loading in the data
+```{r}
+library(haven)
+data <- read_sav("t821_martanew.sav")
+subdata <- data[, c('gender','age','wbccat','anthra_dose','relapse','secmalign',
+                    'death','time_surv',
+                    'event','time_event',
+                    'event_CR','time_CR')]
+set.seed(42)
+```
+
+
+
+#Multiple Imputation: Filling in mean, max and min
+Of course we need the filled in value for complete remission to be lower than the survival time
+```{r}
+mean_tCR <- mean(subdata$time_CR[which(!is.na(subdata$time_CR))])
+print("For which missing data will the overall mean not work:")
+which(subdata$time_surv[which(is.na(subdata$time_CR) & subdata$event_CR == 0)] <= mean_tCR )
+min_tCR <- min(subdata$time_CR[which(!is.na(subdata$time_CR))])
+print("For which missing data will the overall min not work:")
+which(subdata$time_surv[which(is.na(subdata$time_CR) & subdata$event_CR == 0)] <= min_tCR )
+max_tCR <- max(subdata$time_CR[which(!is.na(subdata$time_CR))])
+print("For which missing data will the overall max not work:")
+which(subdata$time_surv[which(is.na(subdata$time_CR) & subdata$event_CR == 0)] <= max_tCR )
+#rm(list = c("mean_tCR", "min_tCR", "max_tCR"))
+```
+Notice that this does not work for the maximum so we need a better way to fill it in than the overall mean, minimum and maximum.
+
+
+```{r}
+#The filled in mean vector
+time_CR_meanfill <- subdata$time_CR #Vector to be filled
+missing <- which(is.na(subdata$time_CR) & data$event_CR == 0)#Which data is missing
+for (value in missing) {
+  time_CR_meanfill[value] = 
+    mean(subdata$time_CR[which(!is.na(subdata$time_CR))])
+}
+
+#The filled in min vector
+time_CR_minfill <- subdata$time_CR #Vector to be filled
+missing <- which(is.na(subdata$time_CR) & data$event_CR == 0)#Which data is missing
+for (value in missing) {
+  time_CR_minfill[value] = 
+    min(subdata$time_CR[which(!is.na(subdata$time_CR))])
+}
+
+#The filled in max vector
+time_CR_event_maxfill <- subdata$time_CR #Vector to be filled for event
+time_CR_death_maxfill <- subdata$time_CR #Vector to be filled for death
+missing <- which(is.na(subdata$time_CR) & data$event_CR == 0)#Which data is missing
+for (value in missing) {
+  time_CR_event_maxfill[value] = 
+    max(subdata$time_CR[which(subdata$time_CR <= subdata$time_event[value] 
+                        & !is.na(subdata$time_CR))])
+  time_CR_death_maxfill[value] = 
+    max(subdata$time_CR[which(subdata$time_CR <= subdata$time_surv[value] 
+                        & !is.na(subdata$time_CR))])
+}
+```
+
+
+##Plotting estimators time since complete remission
+```{r}
+#Making a subset and 8 new columns we need
+subdata_CR_fill <- subdata#New dataset 
+
+subdata_CR_fill$time_event_sinceCR <- #event 
+  subdata_CR_fill$time_event - subdata_CR_fill$time_CR
+subdata_CR_fill$time_surv_sinceCR <- #death
+  subdata_CR_fill$time_surv - subdata_CR_fill$time_CR
+
+subdata_CR_fill$time_event_sinceCR_meanfill <- #event and mean
+  subdata_CR_fill$time_event - time_CR_meanfill
+subdata_CR_fill$time_surv_sinceCR_meanfill <- #death and mean
+  subdata_CR_fill$time_surv - time_CR_meanfill
+
+subdata_CR_fill$time_event_sinceCR_minfill <- #event and min
+  subdata_CR_fill$time_event - time_CR_minfill
+subdata_CR_fill$time_surv_sinceCR_minfill <- #death and min
+  subdata_CR_fill$time_surv - time_CR_minfill
+
+subdata_CR_fill$time_event_sinceCR_maxfill <- #event and max
+  subdata_CR_fill$time_event - time_CR_event_maxfill
+subdata_CR_fill$time_surv_sinceCR_maxfill <- #death and max
+  subdata_CR_fill$time_surv - time_CR_death_maxfill
+```
+
+
+
+```{r}
+#Plotting EFS
+##original
+fit_event_km_CR <- survfit(Surv(time_event_sinceCR, event) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_event_km_CR <- data.frame(time = fit_event_km_CR$time,
+                          surv = fit_event_km_CR$surv,
+                          Estimator = "Known values")
+##mean
+fit_event_km_CR_meanfill <- survfit(Surv(time_event_sinceCR_meanfill, event) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_event_km_CR_meanfill <- data.frame(time = fit_event_km_CR_meanfill$time,
+                          surv = fit_event_km_CR_meanfill$surv,
+                          Estimator = "Known values and missing values are filled with the mean")
+##min
+fit_event_km_CR_minfill <- survfit(Surv(time_event_sinceCR_minfill, event) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_event_km_CR_minfill <- data.frame(time = fit_event_km_CR_minfill$time,
+                          surv = fit_event_km_CR_minfill$surv,
+                          Estimator = "Known values and missing values are filled with the minimum")
+##max
+fit_event_km_CR_maxfill <- survfit(Surv(time_event_sinceCR_maxfill, event) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_event_km_CR_maxfill <- data.frame(time = fit_event_km_CR_maxfill$time,
+                          surv = fit_event_km_CR_maxfill$surv,
+                          Estimator = "Known values and missing values are filled with the maximum")
+
+df_event_CR_fill <- rbind(df_event_km_CR, df_event_km_CR_meanfill,
+                          df_event_km_CR_minfill, df_event_km_CR_maxfill )#combining the dataframes
+
+plot_event_CR_fill <- ggplot(df_event_CR_fill, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Event Free Survival using the Kaplan-Meier estimator",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.3, 0.25),
+        legend.background = element_rect(fill = "white"))
+print(plot_event_CR_fill)
+ggsave("Event_free_survival_filled.png", plot = plot_event_CR_fill, 
+       width = 6.5, height = 4, dpi = 300)
+
+#Plotting OS
+##original
+fit_death_km_CR <- survfit(Surv(time_surv_sinceCR, death) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_death_km_CR <- data.frame(time = fit_death_km_CR$time,
+                          surv = fit_death_km_CR$surv,
+                          Estimator = "Known values")
+##mean
+fit_death_km_CR_meanfill <- survfit(Surv(time_surv_sinceCR_meanfill, death) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_death_km_CR_meanfill <- data.frame(time = fit_death_km_CR_meanfill$time,
+                          surv = fit_death_km_CR_meanfill$surv,
+                          Estimator = "Known values and missing values are filled with the mean")
+##min
+fit_death_km_CR_minfill <- survfit(Surv(time_surv_sinceCR_minfill, death) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_death_km_CR_minfill <- data.frame(time = fit_death_km_CR_minfill$time,
+                          surv = fit_death_km_CR_minfill$surv,
+                          Estimator = "Known values and missing values are filled with the minimum")
+##max
+fit_death_km_CR_maxfill <- survfit(Surv(time_surv_sinceCR_maxfill, death) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_death_km_CR_maxfill <- data.frame(time = fit_death_km_CR_maxfill$time,
+                          surv = fit_death_km_CR_maxfill$surv,
+                          Estimator = "Known values and missing values are filled with the maximum")
+
+df_death_CR_fill <- rbind(df_death_km_CR, df_death_km_CR_meanfill,
+                          df_death_km_CR_minfill, df_death_km_CR_maxfill )#combining the dataframes
+
+plot_death_CR_fill <- ggplot(df_death_CR_fill, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Overall Survival using the Kaplan-Meier estimator",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.3, 0.25),
+        legend.background = element_rect(fill = "white"))
+print(plot_death_CR_fill)
+ggsave("Overall_survival_filled.png", plot = plot_death_CR_fill, 
+       width = 6.5, height = 4, dpi = 300)
+```
+
+#To show that the event and survival times of the missing data are just lower
+```{r}
+mean(subdata$time_event[which(!is.na(subdata$time_CR)&!is.na(subdata$time_event))])#Observed
+mean(subdata$time_event[which(is.na(subdata$time_CR)&subdata$event_CR == 0)])#Missing
+
+mean(subdata$time_surv[which(!is.na(subdata$time_CR)&!is.na(subdata$time_surv))])#Observed
+mean(subdata$time_surv[which(is.na(subdata$time_CR)&subdata$event_CR == 0)])#Missing
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

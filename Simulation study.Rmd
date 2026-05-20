@@ -1,0 +1,75 @@
+---
+title: "Simulation study"
+author: "Rianne"
+date: "2026-05-20"
+output: html_document
+---
+
+#Survival packages 
+```{r}
+library(ggsurvfit)
+library(survival)
+library(survminer)
+library(ggplot2)
+set.seed(42)
+```
+
+#Functions
+```{r}
+#Function for making the dataset
+dataset <- function(n, perc_censored) {
+  time_CR = rexp(n, 7.7)
+  time_event = rexp(n, 0.1)
+  event = rbinom(n, size = 1, prob = 1 - perc_censored)
+  
+  dataset <- data.frame(
+    time_event = time_event,
+    event = event,
+    time_CR = time_CR,
+    time_CR_to_time_event = time_event - time_CR
+  )
+  return(dataset)
+}
+
+#Function for simulating the missing values 
+dataset_missing <- function(dataset, perc_missing) {
+  missing = rbinom(nrow(dataset), size = 1, prob = perc_missing)
+  dataset['missing'] = missing
+  dataset$time_CR[dataset$missing == 1] = NA
+  dataset$time_CR_to_time_event[dataset$missing == 1] = NA
+  return(dataset)
+}
+
+#The method of multiple imputation
+Multiple_Imputation <- function(dataset) {
+  
+  return(df)
+}
+
+#The method of Parametric approach
+Parametric_approach <- function(dataset) {
+  
+  return(df)
+}
+```
+
+```{r}
+algoritme <- function(n, perc_censored, perc_missing) {
+  dataset = dataset(n, perc_censored)
+  fit <- survfit(Surv(time_CR_to_time_event, event) ~ 1,
+                          data = dataset)#Kaplan-Meier
+  df <- data.frame(time = fit$time,
+                   surv = fit$surv,
+                   Estimator = "Simulated full dataset")
+  
+  #We simulate missingness
+  dataset_missing = dataset_missing(dataset, perc_missing)
+  #Apply the methods
+  #df_MI = Multiple_Imputation(dataset_missing)
+  #df_PA = Parametric_approach(dataset_missing)
+  #functions <- rbind(df, df_MI, df_PA)#combining the dataframes
+  #return(functions)
+}
+print(algoritme(10, 0.4, 0.4))
+```
+
