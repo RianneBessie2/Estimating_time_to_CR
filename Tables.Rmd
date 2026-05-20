@@ -1,0 +1,82 @@
+---
+title: "Tables"
+author: "Rianne"
+date: "2026-02-24"
+output: github_document
+---
+
+#Loading in the data
+```{r}
+library(haven)
+data <- read_sav("t821_martanew.sav")
+subdata <- data[, c('gender','age','wbccat','anthra_dose','relapse','secmalign',
+                    'death','time_surv',
+                    'event','time_event',
+                    'event_CR','time_CR')]
+```
+
+#Summary of the interesting data
+```{r}
+summary(subdata)
+str(subdata)
+```
+
+##relapse, death, relapse and death, event, event and death
+```{r}
+print("death:")
+table(subdata$death)
+cat("\n")
+print("relapse:")
+table(subdata$relapse)
+cat("\n")
+print("relapse vertical against horizontal death:")
+table(subdata$relapse,subdata$death)
+cat("\n")
+print("event:")
+table(subdata$event)
+cat("\n")
+print("missing data:")
+table(subdata$event_CR[is.na(subdata$time_CR)])
+```
+
+#Reason why imputation function are steeper and lower
+
+```{r}
+table(data$event[which(!is.na(data$time_CR) & data$event_CR == 0)])
+172/488
+table(data$event[which(is.na(data$time_CR) & data$event_CR == 0)])
+117/284
+table(data$death[which(!is.na(data$time_CR) & data$event_CR == 0)])
+111/488
+table(data$death[which(is.na(data$time_CR) & data$event_CR == 0)])
+81/284
+```
+
+
+#Baseline characteristics of the patients
+
+##Baseline gender of the patients
+```{r}
+table(subdata$gender)#1 is male
+```
+##Baseline age of the patients
+```{r}
+cat("Age less than 6 years:", length(which(subdata$age < 6)),"\n")
+cat("Age 6 to less than 9 years:", length(which(subdata$age >= 6 & subdata$age < 9)),"\n")
+cat("Age 9 to less than 13 years:", length(which(subdata$age >= 9 & subdata$age < 13)),"\n")
+cat("Age 13 years or more:", length(which(subdata$age >= 13)),"\n")
+```
+##Baseline white blood cells of the patients
+```{r}
+table(subdata$wbccat) #"<10", "10-<20", "20-<50", "50-<100", ">100", "missing"
+```
+## Baseline anthracyclines dose in induction of the patients
+```{r}
+cat("Anthra_dose of less than 300:", length(which(subdata$anthra_dose < 300)),"\n")
+cat("Anthra_dose of 300 to less than 360:", length(which(subdata$anthra_dose >= 300 & 
+                                                          subdata$anthra_dose < 360)),"\n")
+cat("Anthra_dose of 360 to less than 420:", length(which(subdata$anthra_dose >= 360 & 
+                                                           subdata$anthra_dose < 420)),"\n")
+cat("Anthra_dose of 420 or more:", length(which(subdata$anthra_dose >= 420)),"\n")
+```
+
