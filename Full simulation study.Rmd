@@ -1,0 +1,311 @@
+---
+title: "Simulation study"
+author: "Rianne"
+date: "2026-05-20"
+output: html_document
+---
+
+#Survival packages 
+```{r}
+library(ggsurvfit)
+library(survival)
+library(survminer)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+set.seed(42)
+```
+
+#Functions
+```{r}
+#Function for making the dataset
+dataset <- function(n, perc_censored) {
+  time_CR = rexp(n, 10)
+  time_event = rexp(n, 0.1)
+  event = rbinom(n, size = 1, prob = 1 - perc_censored)
+  
+  dataset <- data.frame(
+    time_CR = time_CR,
+    time_event = time_event,
+    event = event,
+    time_CR_to_time_event = time_event - time_CR
+  )
+  return(dataset)
+}
+
+#Function for simulating the missing values 
+dataset_missing <- function(dataset, perc_missing) {
+  missing = rbinom(nrow(dataset), size = 1, prob = perc_missing)
+  dataset['missing'] = missing
+  dataset$time_CR[dataset$missing == 1] = NA
+  return(dataset)
+}
+```
+
+#The method of multiple imputation
+```{r}
+vector_ecdf_function <- function(data, index) {
+  time_CR_no_na <- data$time_CR[which(!is.na(data$time_CR) 
+                  & data$time_CR <=
+                    data$time_event[index])]#Values we work with
+  ecdf_values <- ecdf(time_CR_no_na)(time_CR_no_na)#Store values
+  vector_ecdf <- data.frame(time_CR_no_na, 
+                          ecdf_values)#The dataframe of combined time & ecdf values
+  vector_ecdf <- vector_ecdf[order(vector_ecdf$time_CR_no_na),]#Ordered
+  rownames(vector_ecdf) <- NULL#Remove index
+  
+  #p_i = P(t_i)-P(t_{i-1})
+  t_previous = 0
+  for (t in 1:nrow(vector_ecdf)) {
+    t_next <- vector_ecdf$ecdf_values[t]
+    vector_ecdf$ecdf_values[t] <- t_next-t_previous
+    t_previous <- t_next
+  }
+  vector_ecdf <- vector_ecdf[which(vector_ecdf$ecdf_values != 0),]#Remove 0 rows
+  return(vector_ecdf)
+}
+
+Multiple_Imputation <- function(data) {
+  #Dataframe to be filled with MI
+  data_MI <- data.frame(index = which(is.na(data$time_CR)),
+        time_event = data$time_event[which(is.na(data$time_CR))],
+        event = data$event[which(is.na(data$time_CR))])
+  
+  #Big for-loop
+  for (i in 1:nrow(data_MI)) {#For every missing data
+    vector_ecdf <- vector_ecdf_function(data, data_MI$index[i])#Making the individual ecdf function
+    for (j in 1:20) {#For every imputation
+      #Fill in the time to event since complete remission
+      data_MI[i,paste0("MI", j)] <- sample(vector_ecdf$time_CR_no_na, 1,
+                         prob = vector_ecdf$ecdf_values)
+    }#For every imputation
+  }#For every missing data
+  
+  #Dataframe to be filled to create the full one
+  observed_data <- data.frame(index = which(!is.na(data$time_CR)),
+    time_event = data$time_event[which(!is.na(data$time_CR))],
+    event = data$event[which(!is.na(data$time_CR))])
+  #Little for-loop for making new rows
+  for (i in 1:nrow(observed_data)) {#For data
+    for (j in 1:20) {#For every Imputation
+      observed_data[i,paste0("MI", j)] <-
+            data$time_CR[observed_data[i,1]]
+    }#For every Imputation
+  }#For data
+  data_MI_complete <- rbind(data_MI, observed_data)#The complete dataset of the imputations
+  data_MI_complete <-
+      data_MI_complete[order(data_MI_complete$index),]#Ordered
+  rownames(data_MI_complete) <- NULL#Remove index
+  
+  #Making each survival function of the imputations and simultaneously constructing the average
+  df <- data.frame(time = seq(1, 10, by = 1),#empty dataset
+                   surv_MI = rep(0, times = 10),
+                   variance_MI = rep(0, times = 10))
+  for (k in 1:11) {#For every time point
+    V = 0
+    B = 0
+    for (i in 1:20) {#For every imputation
+      MI_var <- paste0("MI", i)
+      fit <- survfit(
+              as.formula(paste0("Surv(time_event - ", MI_var,", event) ~ 1")),
+              data = data_MI_complete)
+      df$surv_MI[which(df$time == k)] = df$surv_MI[which(df$time == k)]+(summary(fit, times = k)$surv / 20)
+    }#For every imputation
+    #Another loop for the variance
+    for (i in 1:20) {#For every imputation
+      MI_var <- paste0("MI", i)
+      fit <- survfit(
+              as.formula(paste0("Surv(time_event - ", MI_var, ", event) ~ 1")),
+              data = data_MI_complete)
+      V = V + (summary(fit, times = k)$std.err^2)/20
+      B = B + 
+        ((summary(fit, times = k)$surv
+          -df$surv_MI[which(df$time == k)])^2)/(19)
+      df$variance_MI[which(df$time == k)] = V + (1+1/20)*B
+    }#For every imputation
+  }
+  return(df)
+}
+```
+
+
+#The method of Parametric approach
+```{r}
+#function for the likelihood
+expexp <- function(par, data_PA) {
+  lambda1 = par[1]
+  lambda2 = par[2]
+  
+  tCR = !is.na(data_PA$time_CR)
+  no_tCR = is.na(data_PA$time_CR)
+  
+  L = length(data_PA$time_CR)* log(lambda1) 
+  L = L + sum(data_PA$event) * log(lambda2)
+  L = L - sum(data_PA$time_event) * lambda2
+  L = L + sum(data_PA$time_CR[tCR]) * (lambda2-lambda1) 
+  L = L + sum(log((exp((lambda2-lambda1)*data_PA$time_event[no_tCR])-1)/(lambda2-lambda1)))
+  return(-L)
+}
+
+#function for the variance
+var_exp <- function(x, lambda) {
+  integral <- function(x, lambda) {
+    func = lambda*exp(-lambda*(1/lambda - x)^2)*(1/lambda - x)^2
+    return(func)
+  }
+  cov = 1/(as.numeric(integrate(integral, lower = 0,
+                                upper = Inf, lambda = lambda)[1]))
+  var = (-lambda*exp(-lambda*x))^2 * cov
+  return(var)
+}
+
+Parametric_approach <- function(dataset) {
+  #Solving the likelihood
+  solutions <- nlminb( c(8, 0.1),
+    expexp,
+    data_PA = dataset,
+    lower = c(2, 1e-8),
+    upper = c(20, 1)
+  )$par
+  lambda <- solutions[2]
+  
+  #Survival function
+  x_vals <- seq(1, 10, length.out = 10)
+  y_vals <- exp(-lambda * x_vals)
+  variance_vals <- var_exp(x_vals, lambda)
+  df <- data.frame(time = x_vals, surv_PA = y_vals,
+                   variance_PA = variance_vals)
+  return(df)
+}
+```
+
+#Function for calculating the bias and the MSE
+```{r}
+bias_and_MSE <- function(sf, n, perc_censored, perc_missing) {
+  bias_MI = sf$surv_MI - sf$surv
+  bias_PA = sf$surv_PA - sf$surv
+  MSE_MI = bias_MI^2 + sf$variance_MI
+  MSE_PA = bias_PA^2 + sf$variance_PA
+  
+  df <- data.frame(time = sf$time, 
+                   bias_MI = bias_MI, MSE_MI = MSE_MI,
+                   bias_PA = bias_PA, MSE_PA = MSE_PA,
+                   n = n, p_c = perc_censored, p_m = perc_missing)
+  return(df)
+}
+```
+
+#The algorithm for one simulation study with given n and percentages
+```{r}
+algorithm <- function(n, perc_censored, perc_missing) {
+  dataset = dataset(n, perc_censored)
+  fit <- survfit(Surv(time_CR_to_time_event, event) ~ 1,
+                          data = dataset)#Kaplan-Meier
+  fit <- summary(fit, times = seq(1, 10, length.out = 10))
+  df <- data.frame(time = fit$time, surv = fit$surv)
+  
+  #We simulate missingness
+  dataset_missing = dataset_missing(dataset, perc_missing)
+  
+  #Apply the methods
+  df_MI = Multiple_Imputation(dataset_missing)
+  df_PA = Parametric_approach(dataset_missing)
+  
+  #Combine each of the final functions in a dataframe
+  survival_functions <- merge(df, df_MI, by = "time")
+  survival_functions <- merge(survival_functions, df_PA, by = "time")
+  
+  return(bias_and_MSE(survival_functions, n, perc_censored, perc_missing))
+}
+```
+#Running the algorithm 2700 times
+```{r}
+iterations = 100
+# Create all 27 combinations
+params <- expand.grid(
+  p1 = c(250, 500, 1000),
+  p2 = c(0.5, 0.6, 0.7),
+  p3 = c(0.3, 0.4, 0.6)
+)
+
+#Vector to fill with results
+results_list <- vector("list", iterations*nrow(params))
+
+# Run the algorithm for each parameter combination
+for (i in 1:nrow(params)) {
+  for (j in 1:iterations) {
+    tryCatch({#if the ecdf function fails in MI
+      df <- algorithm(params$p1[i], params$p2[i], params$p3[i])
+      results_list[[i*iterations+j]] <- df
+    }, error = function(e) {
+      message("An error occurred: ", e$message, ", failed at: ", params$p1[i], params$p2[i], params$p3[i])
+    })
+  }
+}
+# Combine all datasets
+all_results <- do.call(rbind, results_list)
+```
+
+```{r}
+#Average over each timestamp for every column
+average_results <- all_results %>%
+  group_by(time, n, p_c, p_m) %>%
+  summarise(
+    bias_MI = mean(abs(bias_MI), na.rm = TRUE),
+    MSE_MI  = mean(abs(MSE_MI), na.rm = TRUE),
+    bias_PA = mean(abs(bias_PA), na.rm = TRUE),
+    MSE_PA  = mean(abs(MSE_PA), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = -c(time, n, p_c, p_m),
+    names_to = "Measure",
+    values_to = "value"
+  ) %>%
+  as.data.frame()
+
+#renaming entries
+average_results$Measure[average_results$Measure == "bias_MI"] <- "MI bias"
+average_results$Measure[average_results$Measure == "MSE_MI"] <- "MI MSE"
+average_results$Measure[average_results$Measure == "bias_PA"] <- "PA bias"
+average_results$Measure[average_results$Measure == "MSE_PA"] <- "PA MSE"
+
+#Custom color palette
+custom_palette <- c(
+  "#1f77b4", # blue 1
+  "#6baed6", # blue 2
+  "#e41a1c", # red 1
+  "#fb6a4a"  # red 2
+)
+#Create scatter plot n=250
+for (number in list(250, 500, 1000)){
+  plot <- ggplot(average_results[average_results$n == number,],
+                 aes(x = time, y = value,
+                     color = Measure)) +
+    facet_grid(p_c ~ p_m)+
+    geom_point(size = 2, alpha = 0.6) +  # Points
+    labs(
+      title = paste("Average values of the performance measures,
+                     n = ", number),
+      x = "Time since complete remission (in years)",
+      y = "Value"
+    )+
+    scale_x_continuous(breaks = seq(
+      from = 1, 
+      to   = 10, 
+      by   = 1
+    ))+
+    ylim(0,0.02)+
+    scale_color_manual(values = custom_palette) 
+  
+  # Display and save plot
+  print(plot)
+  name <- paste0("full_simulationstudy_test_n", number, ".png")
+  ggsave(name, plot = plot, 
+           width = 6.5, height = 4, dpi = 300)
+}
+```
+
+
+

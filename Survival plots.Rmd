@@ -1,0 +1,311 @@
+---
+title: "Plots"
+author: "Rianne"
+date: "2026-02-26"
+output: html_document
+---
+#Survival packages 
+```{r}
+library(ggsurvfit)
+library(survival)
+library(survminer)
+library(ggplot2)
+```
+
+
+#Loading in the data
+```{r}
+library(haven)
+data <-read_sav("t821_martanew.sav")
+subdata <- data[, c('gender','age','wbccat','anthra_dose','relapse',
+                    'death','time_surv',
+                    'event','time_event',
+                    'event_CR','time_CR')]
+```
+
+
+#Estimators time since diagnosis
+```{r}
+#MLE parameters:
+x_vals <- seq(0, 10, length.out = 1000)#X vector
+#MLE parameters: for EFS
+r_event = sum(subdata$event[!is.na(subdata$time_event)])
+T_event = sum(subdata$time_event[!is.na(subdata$time_event)])
+lambda_event = r_event/T_event
+y_event_vals <- exp(-lambda_event * x_vals)
+#MLE parameters: for OS
+r_death = sum(subdata$death[!is.na(subdata$time_surv)])
+T_death = sum(subdata$time_surv[!is.na(subdata$time_surv)])
+lambda_death = r_death/T_death
+y_death_vals <- exp(-lambda_death * x_vals)
+```
+
+
+#Plotting estimators time since diagnosis
+```{r}
+#EFS nonparametric and parametric
+subdata_event <- subdata[subdata$time_event > 0,c('event','time_event')]
+fit_event_km <- survfit(Surv(time_event, event) ~ 1, data = subdata_event)#Kaplan-Meier
+fit_event_fh <- survfit(Surv(time_event, event) ~ 1, 
+                        data = subdata_event, type = "fh")#Fleming-Harrington
+
+df_event_km <- data.frame(time = fit_event_km$time,
+                          surv = fit_event_km$surv,
+                          lower = fit_event_km$lower,
+                          upper = fit_event_km$upper,
+                          Estimator = "Kaplan–Meier")
+
+df_event_fh <- data.frame(time = fit_event_fh$time,
+                          surv = fit_event_fh$surv,
+                          lower = fit_event_fh$lower,
+                          upper = fit_event_fh$upper,
+                          Estimator = "Fleming–Harrington")
+df_event_l <- data.frame(time = x_vals,
+                         surv = y_event_vals,
+                         lower = NA,
+                         upper = NA,
+                         Estimator = "Exponential distribution")
+
+df_event <- rbind(df_event_km, df_event_fh, df_event_l)#combining the dataframes
+
+plot_event <- ggplot(df_event, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Event Free Survival",
+    x = "Time since diagnosis (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_event)
+
+#OS nonparametric and parametric
+fit_death_km <- survfit(Surv(time_surv, death) ~ 1, data = subdata)#Kaplan-Meier
+fit_death_fh <- survfit(Surv(time_surv, death) ~ 1, 
+                        data = subdata, type = "fh")#Fleming-Harrington
+
+df_death_km <- data.frame(time = fit_death_km$time,
+                          surv = fit_death_km$surv,
+                          lower = fit_death_km$lower,
+                          upper = fit_death_km$upper,
+                          Estimator = "Kaplan–Meier")
+
+df_death_fh <- data.frame(time = fit_death_fh$time,
+                          surv = fit_death_fh$surv,
+                          lower = fit_death_fh$lower,
+                          upper = fit_death_fh$upper,
+                          Estimator = "Fleming–Harrington")
+
+df_death_l <- data.frame(time = x_vals,
+                         surv = y_death_vals,
+                          lower = NA,
+                          upper = NA,
+                         Estimator = "Exponential distribution")
+
+df_death <- rbind(df_death_km, df_death_fh, df_death_l)#combining the dataframes
+
+plot_death <- ggplot(df_death, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Overall Survival",
+    x = "Time since diagnosis (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_death)
+
+#EFS nonparametric with CI
+df_event_CI <- rbind(df_event_km, df_event_fh)#combining the dataframes
+
+plot_event_CI <- ggplot(df_event_CI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = "Event Free Survival with 95% confidence intervals",
+    x = "Time since diagnosis (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_event_CI)
+
+#OS nonparametric with CI
+df_death_CI <- rbind(df_death_km, df_death_fh)#combining the dataframes
+
+plot_death_CI <- ggplot(df_death_CI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = "Overall Survival with 95% confidence intervals",
+    x = "Time since diagnosis (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_death_CI)
+```
+
+#Plotting estimators time since complete remission
+```{r}
+#making a subset and two new columns we need
+subdata_CR <- subdata[!is.na(subdata$time_CR),]
+subdata_CR$time_event_sinceCR <- subdata_CR$time_event - subdata_CR$time_CR
+subdata_CR$time_surv_sinceCR <- subdata_CR$time_surv - subdata_CR$time_CR
+
+#likelihood parameters:
+x_vals <- seq(0, 10, length.out = 1000)
+#likelihood parameters: for EFS
+r_event_CR = sum(subdata_CR$event[!is.na(subdata_CR$time_event_sinceCR)])
+T_event_CR = sum(subdata_CR$time_event_sinceCR[!is.na(subdata_CR$time_event_sinceCR)])
+lambda_event_CR = r_event_CR/T_event_CR
+y_event_vals_CR <- exp(-lambda_event_CR * x_vals)
+#likelihood parameters: for OS
+r_death_CR = sum(subdata_CR$death[!is.na(subdata_CR$time_surv_sinceCR)])
+T_death_CR = sum(subdata_CR$time_surv_sinceCR[!is.na(subdata_CR$time_surv_sinceCR)])
+lambda_death_CR = r_death_CR/T_death_CR
+y_death_vals_CR <- exp(-lambda_death_CR * x_vals)
+```
+
+```{r}
+#EFS nonparametric and parametric
+fit_event_km_CR <- survfit(Surv(time_event_sinceCR, event) ~ 1, data = subdata_CR)#Kaplan-Meier
+fit_event_fh_CR <- survfit(Surv(time_event_sinceCR, event) ~ 1, 
+                           data = subdata_CR, type = "fh")#Fleming-Harrington
+
+df_event_km_CR <- data.frame(time = fit_event_km_CR$time,
+                          surv = fit_event_km_CR$surv,
+                          lower = fit_event_km_CR$lower,
+                          upper = fit_event_km_CR$upper,
+                          Estimator = "Kaplan–Meier")
+
+df_event_fh_CR <- data.frame(time = fit_event_fh_CR$time,
+                          surv = fit_event_fh_CR$surv,
+                          lower = fit_event_fh_CR$lower,
+                          upper = fit_event_fh_CR$upper,
+                          Estimator = "Fleming–Harrington")
+df_event_l_CR <- data.frame(time = x_vals,
+                         surv = y_event_vals_CR,
+                         lower = NA,
+                         upper = NA,
+                         Estimator = "Exponential distribution")
+
+df_event_CR <- rbind(df_event_km_CR, df_event_fh_CR, df_event_l_CR)#combining the dataframes
+
+plot_event_CR <- ggplot(df_event_CR, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Event Free Survival",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_event_CR)
+
+#OS nonparametric and parametric
+fit_death_km_CR <- survfit(Surv(time_surv_sinceCR, death) ~ 1, data = subdata_CR)#Kaplan-Meier
+fit_death_fh_CR <- survfit(Surv(time_surv_sinceCR, death) ~ 1, 
+                           data = subdata_CR, type = "fh")#Fleming-Harrington
+
+df_death_km_CR <- data.frame(time = fit_death_km_CR$time,
+                          surv = fit_death_km_CR$surv,
+                          lower = fit_death_km_CR$lower,
+                          upper = fit_death_km_CR$upper,
+                          Estimator = "Kaplan–Meier")
+
+df_death_fh_CR <- data.frame(time = fit_death_fh_CR$time,
+                          surv = fit_death_fh_CR$surv,
+                          lower = fit_death_fh_CR$lower,
+                          upper = fit_death_fh_CR$upper,
+                          Estimator = "Fleming–Harrington")
+
+df_death_l_CR <- data.frame(time = x_vals,
+                         surv = y_death_vals_CR,
+                          lower = NA,
+                          upper = NA,
+                         Estimator = "Exponential distribution")
+
+df_death_CR <- rbind(df_death_km_CR, df_death_fh_CR, df_death_l_CR)#combining the dataframes
+
+plot_death_CR <- ggplot(df_death_CR, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Overall Survival",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_death_CR)
+
+#EFS nonparametric with CI
+df_event_CR_CI <- rbind(df_event_km_CR, df_event_fh_CR)#combining the dataframes
+
+plot_event_CR_CI <- ggplot(df_event_CR_CI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = "Event Free Survival with 95% confidence intervals",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_event_CR_CI)
+
+#OS nonparametric with CI
+df_death_CR_CI <- rbind(df_death_km_CR, df_death_fh_CR)#combining the dataframes
+
+plot_death_CR_CI <- ggplot(df_death_CR_CI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = "Overall Survival with 95% confidence intervals",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.2, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_death_CR_CI)
+```
+
+#saving the images
+```{r}
+ggsave("Event_free_survival_time_since_diagnosis.png", plot = plot_event, 
+       width = 6.5, height = 4, dpi = 300)
+ggsave("Overall_survival_time_since_diagnosis.png", plot = plot_death, 
+       width = 6.5, height = 4, dpi = 300)
+ggsave("Event_free_survival_time_since_diagnosis_CI.png", plot = plot_event_CI, 
+       width = 6.5, height = 4, dpi = 300)
+ggsave("Overall_survival_time_since_diagnosis_CI.png", plot = plot_death_CI, 
+       width = 6.5, height = 4, dpi = 300)
+ggsave("Event_free_survival_time_since_complete_remission.png", plot = plot_event_CR, 
+       width = 6.5, height = 4, dpi = 300)
+ggsave("Overall_survival_time_since_complete_remission.png", plot = plot_death_CR, 
+       width = 6.5, height = 4, dpi = 300)
+ggsave("Event_free_survival_time_since_complete_remission_CI.png", plot = plot_event_CR_CI, 
+       width = 6.5, height = 4, dpi = 300)
+ggsave("Overall_survival_time_since_complete_remission_CI.png", plot = plot_death_CR_CI, 
+       width = 6.5, height = 4, dpi = 300)
+```

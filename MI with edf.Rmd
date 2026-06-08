@@ -1,0 +1,282 @@
+---
+title: "MI with edf"
+author: "Rianne"
+date: "2026-03-23"
+output: html_document
+---
+#Survival packages 
+```{r}
+library(ggsurvfit)
+library(survival)
+library(survminer)
+library(ggplot2)
+library(stringr)
+```
+
+#Loading in the data
+```{r}
+library(haven)
+data <- read_sav("t821_martanew.sav")
+subdata <- data[, c('gender','age','wbccat','anthra_dose','relapse','secmalign',
+                    'death','time_surv',
+                    'event','time_event',
+                    'event_CR','time_CR')]
+set.seed(42)
+m = 20
+```
+
+
+#Multiple Imputation: With ecdf
+```{r}
+#function to make each individual ecdf function
+data_ecdf_function <- function(e_or_s, index) {
+  if (e_or_s == "s") {
+  time_CR_no_na <- subdata$time_CR[which(!is.na(subdata$time_CR) 
+                  & subdata$time_CR <=
+                    subdata$time_surv[index])]#Values we work with
+  } else {
+  time_CR_no_na <- subdata$time_CR[which(!is.na(subdata$time_CR) 
+                  & subdata$time_CR <=
+                    subdata$time_event[index])]#Values we work with
+  }
+  ecdf_values <- ecdf(time_CR_no_na)(time_CR_no_na)#Store values
+  data_ecdf <- data.frame(time_CR_no_na, 
+                          ecdf_values)#The dataframe of combined time & ecdf values
+  data_ecdf <- data_ecdf[order(data_ecdf$time_CR_no_na),]#Ordered
+  rownames(data_ecdf) <- NULL#Remove index
+  
+  #p_i = P(t_i)-P(t_{i-1})
+  t_previous = 0
+  for (t in 1:nrow(data_ecdf)) {
+    t_next <- data_ecdf$ecdf_values[t]
+    data_ecdf$ecdf_values[t] <- t_next-t_previous
+    t_previous <- t_next
+  }
+  data_ecdf <- data_ecdf[which(data_ecdf$ecdf_values != 0),]#Remove 0 rows
+  return(data_ecdf)
+}
+```
+
+
+```{r}
+#Making the imputation values
+
+#Dataframe to be filled
+data_MI <- data.frame(index = which(is.na(subdata$time_CR) 
+                                    & subdata$event_CR == 0),
+    time_event = subdata$time_event[which(is.na(subdata$time_CR) 
+                              & subdata$event_CR == 0)],
+    event = subdata$event[which(is.na(subdata$time_CR) 
+                          & subdata$event_CR == 0)],
+    time_surv = subdata$time_surv[which(is.na(subdata$time_CR) 
+                          & subdata$event_CR == 0)],
+    death = subdata$death[which(is.na(subdata$time_CR) 
+                            & subdata$event_CR == 0)])
+
+#Big for-loop
+for (i in 1:nrow(data_MI)) {#For every missing data
+  data_ecdf_event <- data_ecdf_function("e", data_MI$index[i])#Making the individual ecdf function
+  data_ecdf_death <- data_ecdf_function("s", data_MI$index[i])#Making the individual ecdf function
+  for (j in 1:m) {#For every imputation
+    data_MI[i,paste0("MI", j, "event")] <-
+                sample(data_ecdf_event$time_CR_no_na, 1,
+                       prob = data_ecdf_event$ecdf_values)
+    data_MI[i,paste0("MI", j, "surv")] <-
+                sample(data_ecdf_death$time_CR_no_na, 1,
+                       prob = data_ecdf_death$ecdf_values)
+  }#For every imputation
+}#For every missing data
+```
+
+
+
+```{r}
+#Combining the observed values and the multiple imputations into one complete dataset
+observed_data <- data.frame(index = which(!is.na(subdata$time_CR)),
+      time_event = subdata$time_event[which(!is.na(subdata$time_CR))],
+      event = subdata$event[which(!is.na(subdata$time_CR))],
+      time_surv = subdata$time_surv[which(!is.na(subdata$time_CR))],
+      death = subdata$death[which(!is.na(subdata$time_CR))])
+#Little for-loop for making new rows
+for (i in 1:nrow(observed_data)) {#For data
+  for (j in 1:m) {#For every Imputation
+    observed_data[i,paste0("MI", j, "event")] <-
+        subdata$time_CR[observed_data[i,1]]
+    observed_data[i,paste0("MI", j, "surv")] <-
+        subdata$time_CR[observed_data[i,1]]
+  }#For every Imputation
+}#For data
+data_MI_complete <- rbind(data_MI, observed_data)#The complete dataset of the imputations
+data_MI_complete <- data_MI_complete[order(data_MI_complete$index),]#Ordered
+rownames(data_MI_complete) <- NULL#Remove index
+```
+
+```{r}
+#Making each survival function of the imputations and simultaneously constructing the average
+df_event_km_CR_MI <- data.frame(time = seq(0, 10, by = 0.01),#empty dataset
+                                surv = rep(0, times = 1001),
+                                lower = rep(0, times = 1001),
+                                upper = rep(0, times = 1001),
+                                Estimator = "Known values and missing values are filled using MI")
+df_death_km_CR_MI <- data.frame(time = seq(0, 10, by = 0.01),#empty dataset
+                                surv = rep(0, times = 1001),
+                                lower = rep(0, times = 1001),
+                                upper = rep(0, times = 1001),
+                                Estimator = "Known values and missing values are filled using MI")
+
+#fill datasets
+for (j in 0:1000) {#For every time point
+  k = 0.01*j
+  V_e = 0
+  B_e = 0
+  V_s = 0
+  B_s = 0
+  for (i in 1:m) {#For every imputation
+    MI_var <- paste0("MI", i, "event")
+    fit_event_km_CR_MI <- survfit(
+            as.formula(paste0("Surv(time_event - ", MI_var, ", event) ~ 1")),
+            data = data_MI_complete)#Event
+    MI_var <- paste0("MI", i, "surv")
+    fit_death_km_CR_MI <- survfit(
+            as.formula(paste0("Surv(time_surv - ", MI_var, ", death) ~ 1")),
+            data = data_MI_complete)#Death
+    
+    df_event_km_CR_MI$surv[which(df_event_km_CR_MI$time == k)] =
+      df_event_km_CR_MI$surv[which(df_event_km_CR_MI$time == k)]+
+      (summary(fit_event_km_CR_MI, times = k)$surv / m)
+    
+    df_death_km_CR_MI$surv[which(df_death_km_CR_MI$time == k)] =
+      df_death_km_CR_MI$surv[which(df_death_km_CR_MI$time == k)]+
+      (summary(fit_death_km_CR_MI, times = k)$surv / m)
+  }
+  for (i in 1:m) {#For every imputation
+    MI_var <- paste0("MI", i, "event")
+    fit_event_km_CR_MI <- survfit(
+            as.formula(paste0("Surv(time_event - ", MI_var, ", event) ~ 1")),
+            data = data_MI_complete)#Event
+    MI_var <- paste0("MI", i, "surv")
+    fit_death_km_CR_MI <- survfit(
+            as.formula(paste0("Surv(time_surv - ", MI_var, ", death) ~ 1")),
+            data = data_MI_complete)#Death
+    #Confidence intervals variables
+    V_e = V_e + (summary(fit_event_km_CR_MI, times = k)$std.err^2)/m
+    V_s = V_s + (summary(fit_death_km_CR_MI, times = k)$std.err^2)/m
+    B_e = B_e + 
+      ((summary(fit_event_km_CR_MI, times = k)$surv
+        -df_event_km_CR_MI$surv[which(df_event_km_CR_MI$time == k)])^2)/(m-1)
+    B_s = B_s + 
+      ((summary(fit_death_km_CR_MI, times = k)$surv
+        -df_death_km_CR_MI$surv[which(df_death_km_CR_MI$time == k)])^2)/(m-1)
+  }
+  #Confidence intervals
+  S_t_e = df_event_km_CR_MI$surv[which(df_event_km_CR_MI$time == k)]
+  V_total_e = V_e + (1+1/m)*B_e
+  r_e = B_e*(1+1/m)/V_e
+  nu_e = (m-1)*(1+(1/r_e))^2
+  t_nu_e = qt(0.975, nu_e) 
+  df_event_km_CR_MI$lower[which(df_event_km_CR_MI$time == k)] = S_t_e - t_nu_e*sqrt(V_total_e)
+  df_event_km_CR_MI$upper[which(df_event_km_CR_MI$time == k)] = S_t_e + t_nu_e*sqrt(V_total_e)
+  
+  S_t_s = df_death_km_CR_MI$surv[which(df_death_km_CR_MI$time == k)]
+  V_total_s = V_s + (1+1/m)*B_s
+  r_s = B_s*(1+1/m)/V_s
+  nu_s = (m-1)*(1+(1/r_s))^2
+  t_nu_s = qt(0.975, nu_s) 
+  df_death_km_CR_MI$lower[which(df_death_km_CR_MI$time == k)] = S_t_s - t_nu_s*sqrt(V_total_s)
+  df_death_km_CR_MI$upper[which(df_death_km_CR_MI$time == k)] = S_t_s + t_nu_s*sqrt(V_total_s)
+}
+```
+
+
+```{r}
+#Plotting the Survival functions made with multiple Imputation and 95% confidence intervals
+subdata_CR_fill <- subdata#New dataset 
+subdata_CR_fill$time_event_sinceCR <- #event 
+  subdata_CR_fill$time_event - subdata_CR_fill$time_CR
+subdata_CR_fill$time_surv_sinceCR <- #death
+  subdata_CR_fill$time_surv - subdata_CR_fill$time_CR
+
+fit_event_km_CR <- survfit(Surv(time_event_sinceCR, event) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_event_km_CR <- data.frame(time = fit_event_km_CR$time,
+                          surv = fit_event_km_CR$surv,
+                          lower = fit_event_km_CR$lower,
+                          upper = fit_event_km_CR$upper,
+                          Estimator = "Known values")
+fit_death_km_CR <- survfit(Surv(time_surv_sinceCR, death) ~ 1, 
+                              data = subdata_CR_fill)#Kaplan-Meier
+df_death_km_CR <- data.frame(time = fit_death_km_CR$time,
+                          surv = fit_death_km_CR$surv,
+                          lower = fit_death_km_CR$lower,
+                          upper = fit_death_km_CR$upper,
+                          Estimator = "Known values")
+
+
+df_event_km_CR_MI <- rbind(df_event_km_CR, df_event_km_CR_MI)#combining the dataframes
+plot_event_km_CR_MI_CI <- ggplot(df_event_km_CR_MI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = str_wrap("Event Free Survival using the Kaplan-Meier estimator and Multiple Imputation", width = 65),
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.3, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_event_km_CR_MI_CI)
+ggsave("Event_free_survival_MI_CI.png", plot = plot_event_km_CR_MI_CI, 
+       width = 6.5, height = 4, dpi = 300)
+
+df_death_km_CR_MI <- rbind(df_death_km_CR, df_death_km_CR_MI)#combining the dataframes
+plot_death_km_CR_MI_CI <- ggplot(df_death_km_CR_MI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = str_wrap("Overall Survival using the Kaplan-Meier estimator and Multiple Imputation", width = 65),
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.3, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_death_km_CR_MI_CI)
+ggsave("Overall_survival_MI_CI.png", plot = plot_death_km_CR_MI_CI, 
+       width = 6.5, height = 4, dpi = 300)
+
+#Plotting the Survival functions made with multiple Imputation
+plot_event_km_CR_MI <- ggplot(df_event_km_CR_MI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = str_wrap("Event Free Survival using the Kaplan-Meier estimator and Multiple Imputation", width = 65),
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.3, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_event_km_CR_MI)
+ggsave("Event_free_survival_MI.png", plot = plot_event_km_CR_MI, 
+       width = 6.5, height = 4, dpi = 300)
+
+plot_death_km_CR_MI <- ggplot(df_death_km_CR_MI, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = str_wrap("Overall Survival using the Kaplan-Meier estimator and Multiple Imputation", width = 65),
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.3, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_death_km_CR_MI)
+ggsave("Overall_survival_MI.png", plot = plot_death_km_CR_MI, 
+       width = 6.5, height = 4, dpi = 300)
+```
+

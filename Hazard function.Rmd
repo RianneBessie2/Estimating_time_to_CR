@@ -1,0 +1,94 @@
+---
+title: "Hazard function"
+author: "Rianne"
+date: "2026-06-03"
+output: html_document
+---
+
+#Survival packages 
+```{r}
+library(ggsurvfit)
+library(survival)
+library(survminer)
+library(ggplot2)
+```
+
+#Loading in the data
+```{r}
+library(haven)
+data <- read_sav("t821_martanew.sav")
+subdata <- data[, c('gender','age','wbccat','anthra_dose','relapse','secmalign',
+                    'death','time_surv',
+                    'event','time_event',
+                    'event_CR','time_CR')]
+set.seed(42)
+```
+
+```{r}
+#Hazard function for the time to event
+# Fit a Kaplan-Meier survival curve
+fit <- survfit(Surv(time_event, event) ~ 1, data = subdata)
+df_data1 <- data.frame(
+  time = fit$time,
+  cumhaz = fit$cumhaz,
+  Plotted = "Data of EFS"
+)
+fit <- survfit(Surv(time_surv, death) ~ 1, data = subdata)
+df_data2 <- data.frame(
+  time = fit$time,
+  cumhaz = fit$cumhaz,
+  Plotted = "Data of OS"
+)
+x_vals <- seq(0, 10, length.out = 1000)
+df_0.1<- data.frame(time = x_vals,
+                       cumhaz = 0.1*x_vals,
+                       Plotted = "Estimation of lambda = 0.1")
+df <- rbind(df_data1, df_data2, df_0.1)#combining the dataframes
+# Plot hazard function
+plot <- ggplot(df, aes(time, cumhaz, color = Plotted))+
+  geom_step()+
+  labs(
+    title = "Estimated cumulative hazard",
+    x = "Time since diagnosis",
+    y = "cumulative hazard"
+  )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.7, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot)
+ggsave("cumhaz_event.png", plot = plot, 
+       width = 6.5, height = 4, dpi = 300)
+
+fit <- survfit(Surv(time_CR) ~ 1, data = subdata)
+df_data3 <- data.frame(
+  time = fit$time,
+  cumhaz = fit$cumhaz,
+  Plotted = "Data of time to CR"
+)
+x_vals <- seq(0, 1, length.out = 1000)
+df_8<- data.frame(time = x_vals,
+                       cumhaz = 10*x_vals,
+                       Plotted = "Estimation of lambda = 10")
+df <- rbind(df_data3, df_8)#combining the dataframes
+# Plot hazard function
+plot <- ggplot(df, aes(time, cumhaz, color = Plotted))+
+  geom_step()+
+  labs(
+    title = "Estimated cumulative hazard",
+    x = "Time since diagnosis",
+    y = "cumulative hazard"
+  )+
+  xlim(0,0.7)+
+  ylim(0,7)+
+  theme(legend.position = c(0.7, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot)
+ggsave("cumhaz_CR.png", plot = plot, 
+       width = 6.5, height = 4, dpi = 300)
+```
+
+
+
+
+

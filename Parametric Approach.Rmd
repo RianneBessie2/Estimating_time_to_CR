@@ -1,0 +1,525 @@
+---
+title: "Parametric Approach"
+author: "Rianne"
+date: "2026-04-28"
+output: html_document
+---
+
+#Loading in the data
+```{r}
+library(haven)
+data <- read_sav("t821_martanew.sav")
+subdata <- data[, c('death','time_surv',
+                    'event','time_event',
+                    'event_CR','time_CR')]
+data_PA <- subdata[which(subdata$event_CR == 0),]
+data_PA[,'time_event_sinceCR']= data_PA[,'time_event'] - data_PA[,'time_CR']
+data_PA[,'time_surv_sinceCR']= data_PA[,'time_surv'] - data_PA[,'time_CR']
+data_PA_e <- data_PA[which(!is.na(data_PA$time_event) 
+                           & (data_PA$time_event_sinceCR != 0 
+                              | is.na(data_PA$time_event_sinceCR)) ),]
+
+library(ggsurvfit)
+library(survival)
+library(survminer)
+library(ggplot2)
+#install.packages("rootSolve")
+library(rootSolve)
+```
+
+
+
+#The case of exponential and exponential
+```{r}
+#event
+expexp_event <- function(par) {
+  data_PA = data_PA_e
+  lambda1 = par[1]
+  lambda2 = par[2]
+  
+  tCR = !is.na(data_PA$time_CR)
+  no_tCR = is.na(data_PA$time_CR)
+  
+  L = length(data_PA$time_CR)* log(lambda1) 
+  L = L + sum(data_PA$event) * log(lambda2)
+  L = L - sum(data_PA$time_event) * lambda2
+  L = L + sum(data_PA$time_CR[tCR]) * (lambda2-lambda1) 
+  L = L + sum(log((exp((lambda2-lambda1)*data_PA$time_event[no_tCR])-1)/(lambda2-lambda1)))
+  return(-L)
+}
+
+solutions <- nlminb( c(9, 0.07), expexp_event,
+  lower = c(2, 1e-8),
+  upper = c(20, 1)
+)$par
+print(solutions)
+ee_event_lambda1 <- solutions[1]
+ee_event_lambda2 <- solutions[2]
+
+#death
+expexp_death <- function(par) {
+  lambda1 = par[1]
+  lambda2 = par[2]
+  
+  tCR = !is.na(data_PA$time_CR)
+  no_tCR = is.na(data_PA$time_CR)
+  
+  L = length(data_PA$time_CR)* log(lambda1) 
+  L = L + sum(data_PA$death) * log(lambda2)
+  L = L - sum(data_PA$time_surv) * lambda2
+  L = L + sum(data_PA$time_CR[tCR]) * (lambda2-lambda1) 
+  L = L + sum(log((exp((lambda2-lambda1)*data_PA$time_surv[no_tCR])-1)/(lambda2-lambda1)))
+  return(-L)
+}
+
+solutions <- nlminb( c(9, 0.07), expexp_death,
+  lower = c(2, 1e-8),
+  upper = c(20, 1)
+)$par
+print(solutions)
+ee_death_lambda1 <- solutions[1]
+ee_death_lambda2 <- solutions[2]
+```
+
+#The case of exponential and weibull
+```{r}
+#event
+expweib_event <- function(par) {
+  data_PA = data_PA_e
+  lambda1 = par[1]
+  alpha = par[2]
+  lambda2 = par[3]
+  
+  f_event <- function(t, lambda1, alpha, lambda2, i) {
+    prod = lambda1*alpha*lambda2*(data_PA$time_event[i]-t)^(alpha-1)*exp(-lambda1*t-lambda2*(data_PA$time_event[i]-t)^(alpha))
+    return(prod)
+  }
+  f_censored <- function(t, lambda1, alpha, lambda2, i) {
+    prod = lambda1*exp(-lambda1*t-lambda2*(data_PA$time_event[i]-t)^(alpha))
+    return(prod)
+  }
+  
+  tCR = !is.na(data_PA$time_CR)
+  no_tCR = is.na(data_PA$time_CR)
+  
+  L = sum(tCR)* log(lambda1)
+  L = L - sum(data_PA$time_CR[tCR])* lambda1
+  L = L + sum(log(alpha*lambda2* data_PA$time_event_sinceCR[tCR & data_PA$event == 1]^(alpha-1)))
+  L = L - sum(data_PA$time_event_sinceCR[tCR]^(alpha))*lambda2
+  
+  for (i in 1:nrow(data_PA)) {
+    if (is.na(data_PA$time_CR[i])) {
+      if (data_PA$event[i]== 1) {
+        L = L + as.numeric(integrate(f_event, lower = 0, upper = data_PA$time_event[i],
+                                     lambda1 = lambda1, alpha = alpha,
+                                     lambda2 = lambda2, i = i)[1])
+      } else {
+        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_event[i],
+                                     lambda1 = lambda1, alpha = alpha,
+                                     lambda2 = lambda2, i = i)[1])
+      }
+    }
+    
+  }
+  return(-L)
+}
+
+solutions <- nlminb( c(9,0.35, 0.1), expweib_event,
+  lower = c(1e-8, 1e-8, 1e-8),
+  upper = c(20,20,20)
+)$par
+print(solutions)
+ew_event_lambda1 <- solutions[1]
+ew_event_alpha <- solutions[2]
+ew_event_lambda2 <- solutions[3]
+
+#death
+expweib_death <- function(par) {
+  lambda1 = par[1]
+  alpha = par[2]
+  lambda2 = par[3]
+  
+  f_death <- function(t, lambda1, alpha, lambda2, i) {
+    prod = lambda1*alpha*lambda2*(data_PA$time_surv[i]-t)^(alpha-1)*exp(-lambda1*t-lambda2*(data_PA$time_surv[i]-t)^(alpha))
+    return(prod)
+  }
+  f_censored <- function(t, lambda1, alpha, lambda2, i) {
+    prod = lambda1*exp(-lambda1*t-lambda2*(data_PA$time_surv[i]-t)^(alpha))
+    return(prod)
+  }
+  
+  tCR = !is.na(data_PA$time_CR)
+  no_tCR = is.na(data_PA$time_CR)
+  
+  L = sum(tCR)* log(lambda1)
+  L = L - sum(data_PA$time_CR[tCR])* lambda1
+  L = L + sum(log(alpha*lambda2* data_PA$time_surv_sinceCR[tCR & data_PA$death == 1]^(alpha-1)))
+  L = L - sum(data_PA$time_surv_sinceCR[tCR]^(alpha))*lambda2
+  
+  for (i in 1:nrow(data_PA)) {
+    if (is.na(data_PA$time_CR[i])) {
+      if (data_PA$death[i]== 1) {
+        L = L + as.numeric(integrate(f_death, lower = 0, upper = data_PA$time_surv[i],
+                                     lambda1 = lambda1, alpha = alpha, lambda2 = lambda2, i = i)[1])
+      } else {
+        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_surv[i],
+                                     lambda1 = lambda1, alpha = alpha, lambda2 = lambda2, i = i)[1])
+      }
+    }
+    
+  }
+  return(-L)
+}
+
+solutions <- nlminb( c(9,0.35, 0.1), expweib_death,
+  lower = c(1e-8, 1e-8, 1e-8),
+  upper = c(20,20,20)
+)$par
+print(solutions)
+ew_death_lambda1 <- solutions[1]
+ew_death_alpha <- solutions[2]
+ew_death_lambda2 <- solutions[3]
+```
+
+
+#The case of weibull and weibull
+```{r}
+#event
+weibweib_event <- function(par) {
+  data_PA = data_PA_e
+  alpha1 = par[1]
+  lambda1 = par[2]
+  alpha2 = par[3]
+  lambda2 = par[4]
+  
+  f_event <- function(t, alpha1, lambda1, alpha2, lambda2, i) {
+    prod = alpha1*lambda1*t^(alpha1-1)*alpha2*lambda2*(data_PA$time_event[i]-t)^(alpha2-1)*exp(-lambda1*t^alpha1-lambda2*(data_PA$time_event[i]-t)^(alpha2))
+    return(prod)
+  }
+  f_censored <- function(t, alpha1, lambda1, alpha2, lambda2, i) {
+    prod = alpha1*lambda1*t^(alpha1-1)*exp(-lambda1*t^(alpha1)-lambda2*(data_PA$time_event[i]-t)^(alpha2))
+    return(prod)
+  }
+  
+  tCR = !is.na(data_PA$time_CR)
+  no_tCR = is.na(data_PA$time_CR)
+  
+  L = sum(log(alpha1*lambda1* data_PA$time_CR[tCR]^(alpha1-1)))
+  L = L - sum(data_PA$time_CR[tCR]^(alpha1))*lambda1
+  L = L + sum(log(alpha2*lambda2* data_PA$time_event_sinceCR[tCR& data_PA$event == 1]^(alpha2-1)))
+  L = L - sum(data_PA$time_event_sinceCR[tCR]^(alpha2))*lambda2
+  
+  for (i in 1:nrow(data_PA)) {
+    if (is.na(data_PA$time_CR[i])) {
+      if (data_PA$event[i]== 1) {
+        L = L + as.numeric(integrate(f_event, lower = 0, upper = data_PA$time_event[i], 
+                                     alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
+                                     lambda2 = lambda2, i = i)[1])
+      } else {
+        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_event[i],
+                                     alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
+                                     lambda2 = lambda2, i = i)[1])
+      }
+    }
+    
+  }
+  return(-L)
+}
+
+solutions <- nlminb( c(1.8, 25, 0.35, 0.1), weibweib_event,
+  lower = c(1e-8, 1e-8, 1e-8, 1e-8),
+  upper = c(50, 50, 50, 50)
+)$par
+
+print(solutions)
+ww_event_alpha1 <- solutions[1]
+ww_event_lambda1 <- solutions[2]
+ww_event_alpha2 <- solutions[3]
+ww_event_lambda2 <- solutions[4]
+
+#death
+weibweib_death <- function(par) {
+  alpha1 = par[1]
+  lambda1 = par[2]
+  alpha2 = par[3]
+  lambda2 = par[4]
+  
+  f_death <- function(t, alpha1, lambda1, alpha2, lambda2, i) {
+    prod = alpha1*lambda1*t^(alpha1-1)*alpha2*lambda2*(data_PA$time_surv[i]-t)^(alpha2-1)*exp(-lambda1*t^alpha1-lambda2*(data_PA$time_surv[i]-t)^(alpha2))
+    return(prod)
+  }
+  f_censored <- function(t,alpha1, lambda1, alpha2, lambda2, i) {
+    prod = alpha1*lambda1*t^(alpha1-1)*exp(-lambda1*t^(alpha1)-lambda2*(data_PA$time_surv[i]-t)^(alpha2))
+    return(prod)
+  }
+  
+  tCR = !is.na(data_PA$time_CR)
+  no_tCR = is.na(data_PA$time_CR)
+  
+  L = sum(log(alpha1*lambda1* data_PA$time_CR[tCR]^(alpha1-1)))
+  L = L - sum(data_PA$time_CR[tCR]^(alpha1))*lambda1
+  L = L + sum(log(alpha2*lambda2* data_PA$time_surv_sinceCR[tCR& data_PA$death == 1]^(alpha2-1)))
+  L = L - sum(data_PA$time_surv_sinceCR[tCR]^(alpha2))*lambda2
+  
+  for (i in 1:nrow(data_PA)) {
+    if (is.na(data_PA$time_CR[i])) {
+      if (data_PA$death[i]== 1) {
+        L = L + as.numeric(integrate(f_death, lower = 0, upper = data_PA$time_surv[i], 
+                                     alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
+                                     lambda2 = lambda2, i = i)[1])
+      } else {
+        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_surv[i],
+                                     alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
+                                     lambda2 = lambda2, i = i)[1])
+      }
+    }
+    
+  }
+  return(-L)
+}
+
+solutions <- nlminb( c(1.8, 25, 0.35, 0.1), weibweib_death,
+  lower = c(1e-8, 1e-8, 1e-8, 1e-8),
+  upper = c(50, 50, 50, 50)
+)$par
+
+print(solutions)
+ww_death_alpha1 <- solutions[1]
+ww_death_lambda1 <- solutions[2]
+ww_death_alpha2 <- solutions[3]
+ww_death_lambda2 <- solutions[4]
+```
+
+
+#Confidence intervals of an exponential survival function
+```{r}
+var_exp <- function(x, lambda) {
+  integral <- function(x, lambda) {
+    func = lambda*exp(-lambda*(1/lambda - x)^2)*(1/lambda - x)^2
+    return(func)
+  }
+  cov = 1/(as.numeric(integrate(integral, lower = 0,
+                                upper = Inf, lambda = lambda)[1]))
+  var = (-lambda*exp(-lambda*x))^2 * cov
+  return(var)
+}
+
+lower_exp <- function(x,y,lambda) {
+  lower =  y - qnorm(0.975)*sqrt(var_exp(x, lambda))
+  return(lower)
+}
+
+upper_exp <- function(x,y,lambda) {
+  upper =  y + qnorm(0.975)*sqrt(var_exp(x, lambda))
+  return(upper)
+}
+```
+
+
+#Plotting the survival functions
+```{r}
+#plotting the original survival functions of known values exponential
+##making a subset and two new columns we need
+subdata_CR <- subdata[!is.na(subdata$time_CR),]
+subdata_CR$time_event_sinceCR <- subdata_CR$time_event - subdata_CR$time_CR
+subdata_CR$time_surv_sinceCR <- subdata_CR$time_surv - subdata_CR$time_CR
+##Parameters:
+x_vals_T <- seq(0, 2, length.out = 1000)
+x_vals_U <- seq(0, 10, length.out = 1000)
+##Parameters: time to CR
+r_ttCR = length(subdata_CR$event_CR[!is.na(subdata_CR$time_CR)])
+T_ttCR = sum(subdata_CR$time_CR[!is.na(subdata_CR$time_CR)])
+lambda_ttCR = r_ttCR/T_ttCR
+y_vals_ttCR <- exp(-lambda_ttCR * x_vals_T)
+##Parameters: for EFS
+r_event_CR = sum(subdata_CR$event[!is.na(subdata_CR$time_event_sinceCR)])
+T_event_CR = sum(subdata_CR$time_event_sinceCR[!is.na(subdata_CR$time_event_sinceCR)])
+lambda_event_CR = r_event_CR/T_event_CR
+y_event_vals_CR <- exp(-lambda_event_CR * x_vals_U)
+##Parameters: for OS
+r_death_CR = sum(subdata_CR$death[!is.na(subdata_CR$time_surv_sinceCR)])
+T_death_CR = sum(subdata_CR$time_surv_sinceCR[!is.na(subdata_CR$time_surv_sinceCR)])
+lambda_death_CR = r_death_CR/T_death_CR
+y_death_vals_CR <- exp(-lambda_death_CR * x_vals_U)
+##Confidence intervals for the known values
+lower_l_ttCR <- lower_exp(x_vals_T, y_vals_ttCR, lambda_ttCR)
+upper_l_ttCR <- upper_exp(x_vals_T, y_vals_ttCR, lambda_ttCR)
+lower_event_l_CR <- lower_exp(x_vals_U, y_event_vals_CR, lambda_event_CR)
+upper_event_l_CR <- upper_exp(x_vals_U, y_event_vals_CR, lambda_event_CR)
+lower_death_l_CR <- lower_exp(x_vals_U, y_death_vals_CR, lambda_death_CR)
+upper_death_l_CR <- upper_exp(x_vals_U, y_death_vals_CR, lambda_death_CR)
+##dataframes for the known values
+df_l_ttCR <- data.frame(time = x_vals_T,
+                         surv = y_vals_ttCR,
+                         lower = lower_l_ttCR,
+                         upper = upper_l_ttCR,
+                         Estimator = "Exponential using known values")
+df_event_l_CR <- data.frame(time = x_vals_U,
+                         surv = y_event_vals_CR,
+                         lower = lower_event_l_CR,
+                         upper = upper_event_l_CR,
+                         Estimator = "Exponential using known values")
+df_death_l_CR <- data.frame(time = x_vals_U,
+                         surv = y_death_vals_CR,
+                         lower = lower_death_l_CR,
+                         upper = upper_death_l_CR,
+                         Estimator = "Exponential using known values")
+
+
+#Parametric approach:
+##event
+y_vals_eeT_event <- exp(-ee_event_lambda1 * x_vals_T)
+lower_eeT_event <- lower_exp(x_vals_T, y_vals_eeT_event, ee_event_lambda1)
+upper_eeT_event <- upper_exp(x_vals_T, y_vals_eeT_event, ee_event_lambda1)
+df_eeT_event <- data.frame(time = x_vals_T,
+                         surv = y_vals_eeT_event,
+                         lower = lower_eeT_event,
+                         upper = upper_eeT_event,
+                         Estimator = "Exponential using known values and missing values filled using parametric approach")
+
+y_vals_eeU_event <- exp(-ee_event_lambda2 * x_vals_U)
+lower_eeU_event <- lower_exp(x_vals_U, y_vals_eeU_event, ee_event_lambda2)
+upper_eeU_event <- upper_exp(x_vals_U, y_vals_eeU_event, ee_event_lambda2)
+df_eeU_event <- data.frame(time = x_vals_U,
+                         surv = y_vals_eeU_event,
+                         lower = lower_eeU_event,
+                         upper = upper_eeU_event,
+                         Estimator = "Exponential using known values and missing values filled using parametric approach")
+
+y_vals_wwT_event <- exp(-ww_event_lambda1 * x_vals_T^(ww_event_alpha1))
+df_wwT_event <- data.frame(time = x_vals_T,
+                         surv = y_vals_wwT_event,
+                         lower = NA,
+                         upper = NA,
+                         Estimator = "Weibull using known values and missing values filled using parametric approach")
+
+y_vals_wwU_event <- exp(-ww_event_lambda2 * x_vals_U^(ww_event_alpha2))
+df_wwU_event <- data.frame(time = x_vals_U,
+                         surv = y_vals_wwU_event,
+                         lower = NA,
+                         upper = NA,
+                         Estimator = "Weibull using known values and missing values filled using parametric approach")
+##death
+y_vals_eeU_death <- exp(-ee_death_lambda2 * x_vals_U)
+lower_eeU_death <- lower_exp(x_vals_T, y_vals_eeU_death, ee_death_lambda2)
+upper_eeU_death <- upper_exp(x_vals_T, y_vals_eeU_death, ee_death_lambda2)
+df_eeU_death <- data.frame(time = x_vals_U,
+                         surv = y_vals_eeU_death,
+                         lower = lower_eeU_death,
+                         upper = upper_eeU_death,
+                         Estimator = "Exponential using known values and missing values filled using parametric approach")
+
+y_vals_wwU_death <- exp(-ww_death_lambda2 * x_vals_U^(ww_death_alpha2))
+df_wwU_death <- data.frame(time = x_vals_U,
+                         surv = y_vals_wwU_death,
+                         lower = NA,
+                         upper = NA,
+                         Estimator = "Weibull using known values and missing values filled using parametric approach")
+
+#Plotting time to Complete remission for event (death and event give the same result)
+df_T_event <- rbind(df_eeT_event, df_l_ttCR, df_wwT_event)#combining the dataframes
+plot_T_event <- ggplot(df_T_event, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Time to complete remission using Parametric approach",
+    x = "Time since diagnosis (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,2)+
+  ylim(0,1)+
+  theme(legend.position = c(0.6, 0.8),
+        legend.background = element_rect(fill = "white"))
+print(plot_T_event)
+ggsave("PA_T.png", plot = plot_T_event, 
+       width = 6.5, height = 4, dpi = 300)
+#Plotting time to complete remission for event with 95% confidence intervals
+df_T_event <- rbind(df_eeT_event, df_l_ttCR)#combining the dataframes
+plot_T_event <- ggplot(df_T_event, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = str_wrap("Time to complete remission using Parametric approach with 95% confidence intervals", width = 65),
+    x = "Time since diagnosis (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,2)+
+  ylim(0,1)+
+  theme(legend.position = c(0.5, 0.8),
+        legend.background = element_rect(fill = "white"))
+print(plot_T_event)
+ggsave("PA_T_CI.png", plot = plot_T_event, 
+       width = 6.5, height = 4, dpi = 300)
+
+
+#Plotting EFS
+df_U_event <- rbind(df_eeU_event, df_event_l_CR, df_wwU_event)#combining the dataframes
+plot_U_event <- ggplot(df_U_event, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Event free survival using Parametric approach",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.5, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_U_event)
+ggsave("PA_EFS.png", plot = plot_U_event, 
+       width = 6.5, height = 4, dpi = 300)
+#Plotting EFS with CI
+df_U_event <- rbind(df_eeU_event, df_event_l_CR)#combining the dataframes
+plot_U_event <- ggplot(df_U_event, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = "Event free survival using Parametric approach with 95% confidence intervals",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.5, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_U_event)
+ggsave("PA_EFS_CI.png", plot = plot_U_event, 
+       width = 6.5, height = 4, dpi = 300)
+
+#Plotting OS
+df_U_death <- rbind(df_eeU_death, df_death_l_CR, df_wwU_death)#combining the dataframes
+plot_U_death <- ggplot(df_U_death, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  labs(
+    title = "Overall survival using Parametric approach",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.5, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_U_death)
+ggsave("PA_OS.png", plot = plot_U_death, 
+       width = 6.5, height = 4, dpi = 300)
+#Plotting OS with CI
+df_U_death <- rbind(df_eeU_death, df_death_l_CR)#combining the dataframes
+plot_U_death <- ggplot(df_U_death, aes(time, surv, color = Estimator)) +
+  geom_step()+
+  geom_step(aes(y = lower), linetype = "dashed") +
+  geom_step(aes(y = upper), linetype = "dashed") +
+  labs(
+    title = "Overall survival using Parametric approach with 95% confidence intervals",
+    x = "Time since complete remission (in years)",
+    y = "Survival function"
+    )+
+  xlim(0,10)+
+  ylim(0,1)+
+  theme(legend.position = c(0.5, 0.2),
+        legend.background = element_rect(fill = "white"))
+print(plot_U_death)
+ggsave("PA_OS_CI.png", plot = plot_U_death, 
+       width = 6.5, height = 4, dpi = 300)
+```
+
