@@ -23,8 +23,8 @@ library(ggsurvfit)
 library(survival)
 library(survminer)
 library(ggplot2)
-#install.packages("rootSolve")
 library(rootSolve)
+library(stringr)
 ```
 
 
@@ -110,13 +110,13 @@ expweib_event <- function(par) {
   for (i in 1:nrow(data_PA)) {
     if (is.na(data_PA$time_CR[i])) {
       if (data_PA$event[i]== 1) {
-        L = L + as.numeric(integrate(f_event, lower = 0, upper = data_PA$time_event[i],
+        L = L + log(as.numeric(integrate(f_event, lower = 0, upper = data_PA$time_event[i],
                                      lambda1 = lambda1, alpha = alpha,
-                                     lambda2 = lambda2, i = i)[1])
+                                     lambda2 = lambda2, i = i)[1]))
       } else {
-        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_event[i],
+        L = L + log(as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_event[i],
                                      lambda1 = lambda1, alpha = alpha,
-                                     lambda2 = lambda2, i = i)[1])
+                                     lambda2 = lambda2, i = i)[1]))
       }
     }
     
@@ -159,11 +159,11 @@ expweib_death <- function(par) {
   for (i in 1:nrow(data_PA)) {
     if (is.na(data_PA$time_CR[i])) {
       if (data_PA$death[i]== 1) {
-        L = L + as.numeric(integrate(f_death, lower = 0, upper = data_PA$time_surv[i],
-                                     lambda1 = lambda1, alpha = alpha, lambda2 = lambda2, i = i)[1])
+        L = L + log(as.numeric(integrate(f_death, lower = 0, upper = data_PA$time_surv[i],
+                                     lambda1 = lambda1, alpha = alpha, lambda2 = lambda2, i = i)[1]))
       } else {
-        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_surv[i],
-                                     lambda1 = lambda1, alpha = alpha, lambda2 = lambda2, i = i)[1])
+        L = L + log(as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_surv[i],
+                                     lambda1 = lambda1, alpha = alpha, lambda2 = lambda2, i = i)[1]))
       }
     }
     
@@ -212,13 +212,13 @@ weibweib_event <- function(par) {
   for (i in 1:nrow(data_PA)) {
     if (is.na(data_PA$time_CR[i])) {
       if (data_PA$event[i]== 1) {
-        L = L + as.numeric(integrate(f_event, lower = 0, upper = data_PA$time_event[i], 
+        L = L + log(as.numeric(integrate(f_event, lower = 0, upper = data_PA$time_event[i], 
                                      alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
-                                     lambda2 = lambda2, i = i)[1])
+                                     lambda2 = lambda2, i = i)[1]))
       } else {
-        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_event[i],
+        L = L + log(as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_event[i],
                                      alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
-                                     lambda2 = lambda2, i = i)[1])
+                                     lambda2 = lambda2, i = i)[1]))
       }
     }
     
@@ -264,13 +264,13 @@ weibweib_death <- function(par) {
   for (i in 1:nrow(data_PA)) {
     if (is.na(data_PA$time_CR[i])) {
       if (data_PA$death[i]== 1) {
-        L = L + as.numeric(integrate(f_death, lower = 0, upper = data_PA$time_surv[i], 
+        L = L + log(as.numeric(integrate(f_death, lower = 0, upper = data_PA$time_surv[i], 
                                      alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
-                                     lambda2 = lambda2, i = i)[1])
+                                     lambda2 = lambda2, i = i)[1]))
       } else {
-        L = L + as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_surv[i],
+        L = L + log(as.numeric(integrate(f_censored, lower = 0, upper = data_PA$time_surv[i],
                                      alpha1 = alpha1, lambda1 = lambda1, alpha2 = alpha2,
-                                     lambda2 = lambda2, i = i)[1])
+                                     lambda2 = lambda2, i = i)[1]))
       }
     }
     
